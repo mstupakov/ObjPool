@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <string>
 
 template<typename T>
 class ObjPool {
@@ -31,6 +32,20 @@ class ObjPool {
       m_head = next;
       return obj;
     }
+
+#if __cplusplus >= 201103L
+    template<typename... Args>
+    T* get(Args&&... args) {
+      if (!m_head) {
+        return 0;
+      }
+
+      Node* next = m_head->next;
+      T* obj = new (m_head) T(std::forward<Args> (args)...);
+      m_head = next;
+      return obj;
+    }
+#endif
 
     void free(T* obj) {
       obj->~T();
@@ -69,6 +84,27 @@ struct A {
   }
 };
 
+struct B {
+  B(int a, char b, const std::string& s) {
+    std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
+    std::cout << "   - a: " << a << std::endl;
+    std::cout << "   - b: " << b << std::endl;
+    std::cout << "   - s: " << s << std::endl;
+  }
+
+ ~B() {
+    std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
+  }
+
+  B(const B&) {
+    std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
+  }
+
+  B& operator=(const B&) {
+    std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
+  }
+};
+
 int main() {
   ObjPool<A> pool(5);
 
@@ -96,6 +132,15 @@ int main() {
   v->push_back(A());
 
   pool_v.free(v);
+
+  ObjPool<B> pool_b(5);
+  B* b1 = pool_b.get(1, '$', "Hello!");
+
+  B b2(1, '$', "Hello!");
+
+  B* bb = pool_b.get(b2);
+  pool_b.free(bb);
+  pool_b.free(b1);
 
   return 0;
 }
