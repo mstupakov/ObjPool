@@ -6,10 +6,8 @@
 template<typename T>
 class ObjPool {
   public:
-    ObjPool(unsigned size) {
-      m_head = new Node(0);
-
-      for (unsigned i = 1; i < size; ++i) {
+    ObjPool(unsigned size) : m_head(0) {
+      for (unsigned i = 0; i < size; ++i) {
         m_head = new Node(m_head);
       }
     }
