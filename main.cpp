@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <memory>
 
 template<typename T>
 class ObjPool {
@@ -44,6 +45,14 @@ class ObjPool {
       T* obj = new (m_head) T(std::forward<Args> (args)...);
       m_head = next;
       return obj;
+    }
+
+    using ObjUPtr = std::unique_ptr<T, std::function<void(T*)> >;
+
+    template<typename... Args>
+    ObjUPtr get_unique(Args&&... args) {
+      return ObjUPtr(get(std::forward<Args> (args)...),
+          [this] (T* obj) { this->free(obj); } );
     }
 #endif
 
@@ -103,6 +112,10 @@ struct B {
   B& operator=(const B&) {
     std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
   }
+
+  void method() {
+    std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
+  }
 };
 
 int main() {
@@ -141,6 +154,14 @@ int main() {
   B* bb = pool_b.get(b2);
   pool_b.free(bb);
   pool_b.free(b1);
+
+  ObjPool<B>::ObjUPtr u_ptr1 = pool_b.get_unique(b2);
+  ObjPool<B>::ObjUPtr u_ptr2 = pool_b.get_unique(b2);
+  ObjPool<B>::ObjUPtr u_ptr3 = pool_b.get_unique(2, '%', "World!");
+
+  u_ptr1->method();
+  u_ptr2->method();
+  u_ptr3->method();
 
   return 0;
 }
