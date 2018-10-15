@@ -1,3 +1,5 @@
+#include <valgrind/callgrind.h>
+
 #include <cstring>
 #include <iostream>
 #include <vector>
@@ -5,7 +7,22 @@
 #include <memory>
 #include <functional>
 
+
+extern void f();
+extern void f2(void*);
+
 template<typename T>
+class AA {
+  T* m_pointer;
+
+  public:
+    template<typename ...Args>
+    AA(Args... args) {
+    
+    }
+};
+
+template<typename T, bool S = false>
 class ObjPool {
   public:
     ObjPool(unsigned size) : m_head(0) {
@@ -62,6 +79,15 @@ class ObjPool {
       return ObjSPtr(get(std::forward<Args> (args)...),
           [this] (T* obj) { this->free(obj); } );
     }
+
+    
+    using ObjMPtr = AA<T>;
+
+    template<typename... Args>
+    ObjMPtr get_maks(Args&&... args) {
+      return ObjMPtr(get(std::forward<Args> (args)...),
+          [this] (T* obj) { this->free(obj); } );
+    }
 #endif
 
     void free(T* obj) {
@@ -73,31 +99,43 @@ class ObjPool {
     ObjPool(const ObjPool&);
     ObjPool& operator=(const ObjPool&);
 
-    union Node {
+    union NodeU {
       char obj[sizeof(T)];
-      Node* next;
+      NodeU* next;
 
-      Node(Node* node) : next(node) {}
+      NodeU(NodeU* node) : next(node) {}
     };
+
+    union NodeS {
+      struct {
+        char obj[sizeof(T)];
+        unsigned refcount;
+      };
+
+      NodeS* next;
+      NodeS(NodeS* node) : next(node) {}
+    };
+
+    using Node = typename std::conditional<!S, NodeU, NodeS>::type;
 
     Node* m_head;
 };
 
 struct A {
   A() {
-    std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
+    //std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
   }
 
  ~A() {
-    std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
+    //std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
   }
 
   A(const A&) {
-    std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
+    //std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
   }
 
   void operator=(const A&) {
-    std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
+    //std::cout << __PRETTY_FUNCTION__ << " This: " << this << std::endl;
   }
 };
 
@@ -126,15 +164,30 @@ struct B {
   }
 };
 
+char a;
 struct L2Frame {
   char payload[1500];
+//  L2Frame() {a = payload[1499];}
+
+  L2Frame() : payload() {
+    f2(this);
+  //  std::cout << __PRETTY_FUNCTION__ << std::endl;
+  }
+
+ ~L2Frame() {
+   f2(this);
+   // std::cout << __PRETTY_FUNCTION__ << std::endl;
+  }
 };
 
 void test_shared(ObjPool<B>::ObjSPtr ptr) {
   ptr->method();
+  std::cout << "Count: " << ptr.use_count() << std::endl;
 }
 
 int main() {
+  delete new L2Frame;
+  /*
   ObjPool<A> pool(5);
 
   A* obj_1 = pool.get();
@@ -195,6 +248,135 @@ int main() {
   std::cout << "Size: " << sizeof(*f_ptr1) << std::endl;
 
   memset(f_ptr1->payload, 0, sizeof(*f_ptr1));
+
+  ObjPool<char[100]> pool_c(10);
+  */
+
+  ObjPool<L2Frame> pool_aa(10);
+  ObjPool<L2Frame>::ObjUPtr p = pool_aa.get_unique();
+
+  std::shared_ptr<L2Frame> sp2;
+
+
+  {
+    std::shared_ptr<L2Frame> sp(std::move(p));
+    std::shared_ptr<L2Frame> sp1 = sp;
+    sp2 = sp1;
+  }
+
+  std::cout << "Counter: " << std::endl;//<< sp.use_count() << std::endl;
+
+#ifndef VV
+#define VV 1
+#endif
+
+#if VV == 1
+  ObjPool<L2Frame> pool_a(10);
+
+  CALLGRIND_START_INSTRUMENTATION;
+
+  L2Frame* a0 = pool_a.get();// f2(a0); 
+  L2Frame* a1 = pool_a.get();// f2(a1);
+  L2Frame* a2 = pool_a.get();// f2(a2);
+  L2Frame* a3 = pool_a.get();// f2(a3);
+  L2Frame* a4 = pool_a.get();// f2(a4);
+  L2Frame* a5 = pool_a.get();// f2(a5);
+  L2Frame* a6 = pool_a.get();// f2(a6);
+  L2Frame* a7 = pool_a.get();// f2(a7);
+  L2Frame* a8 = pool_a.get();// f2(a8);
+  L2Frame* a9 = pool_a.get();// f2(a9);
+
+
+  pool_a.free(a9);
+  pool_a.free(a8);
+  pool_a.free(a7);
+  pool_a.free(a6);
+  pool_a.free(a5);
+  pool_a.free(a4);
+  pool_a.free(a3);
+  pool_a.free(a2);
+  pool_a.free(a1);
+  pool_a.free(a0);
+
+  CALLGRIND_STOP_INSTRUMENTATION;
+  CALLGRIND_DUMP_STATS;
+
+#elif VV == 2
+
+  ObjPool<L2Frame> pool_a(10);
+
+  CALLGRIND_START_INSTRUMENTATION;
+
+  {
+    ObjPool<L2Frame>::ObjUPtr a0 = pool_a.get_unique();
+    ObjPool<L2Frame>::ObjUPtr a1 = pool_a.get_unique();
+    ObjPool<L2Frame>::ObjUPtr a2 = pool_a.get_unique();
+    ObjPool<L2Frame>::ObjUPtr a3 = pool_a.get_unique();
+    ObjPool<L2Frame>::ObjUPtr a4 = pool_a.get_unique();
+    ObjPool<L2Frame>::ObjUPtr a5 = pool_a.get_unique();
+    ObjPool<L2Frame>::ObjUPtr a6 = pool_a.get_unique();
+    ObjPool<L2Frame>::ObjUPtr a7 = pool_a.get_unique();
+    ObjPool<L2Frame>::ObjUPtr a8 = pool_a.get_unique();
+    ObjPool<L2Frame>::ObjUPtr a9 = pool_a.get_unique();
+  }
+
+  CALLGRIND_STOP_INSTRUMENTATION;
+  CALLGRIND_DUMP_STATS;
+
+#elif VV == 3
+  ObjPool<L2Frame> pool_a(10);
+
+  CALLGRIND_START_INSTRUMENTATION;
+
+  {
+    ObjPool<L2Frame>::ObjSPtr a0 = pool_a.get_shared();
+    ObjPool<L2Frame>::ObjSPtr a1 = pool_a.get_shared();
+    ObjPool<L2Frame>::ObjSPtr a2 = pool_a.get_shared();
+    ObjPool<L2Frame>::ObjSPtr a3 = pool_a.get_shared();
+    ObjPool<L2Frame>::ObjSPtr a4 = pool_a.get_shared();
+    ObjPool<L2Frame>::ObjSPtr a5 = pool_a.get_shared();
+    ObjPool<L2Frame>::ObjSPtr a6 = pool_a.get_shared();
+    ObjPool<L2Frame>::ObjSPtr a7 = pool_a.get_shared();
+    ObjPool<L2Frame>::ObjSPtr a8 = pool_a.get_shared();
+    ObjPool<L2Frame>::ObjSPtr a9 = pool_a.get_shared();
+  }
+
+  CALLGRIND_STOP_INSTRUMENTATION;
+  CALLGRIND_DUMP_STATS;
+
+#elif VV == 4
+
+  CALLGRIND_START_INSTRUMENTATION;
+
+  L2Frame* a0 = new L2Frame;// f2(a0);
+  L2Frame* a1 = new L2Frame;// f2(a1);
+  L2Frame* a2 = new L2Frame;// f2(a2);
+  L2Frame* a3 = new L2Frame;// f2(a3);
+  L2Frame* a4 = new L2Frame;// f2(a4);
+  L2Frame* a5 = new L2Frame;// f2(a5);
+  L2Frame* a6 = new L2Frame;// f2(a6);
+  L2Frame* a7 = new L2Frame;// f2(a7);
+  L2Frame* a8 = new L2Frame;// f2(a8);
+  L2Frame* a9 = new L2Frame;// f2(a9);
+
+
+  delete (a9);
+  delete (a8);
+  delete (a7);
+  delete (a6);
+  delete (a5);
+  delete (a4);
+  delete (a3);
+  delete (a2);
+  delete (a1);
+  delete (a0);
+
+  CALLGRIND_STOP_INSTRUMENTATION;
+  CALLGRIND_DUMP_STATS;
+
+#endif
+
+//  ObjPool<L2Frame>::ObjMPtr pp = pool_a.get_maks();
 
   return 0;
 }
